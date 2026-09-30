@@ -1,0 +1,10 @@
+SYNTHETIC REPORT - TEST DATA ONLY
+Name: Synthetic Example
+Phone: 202-555-0199
+Email: synthetic@example.invalid
+Glucose 6.2 mmol/L 3.9-6.1
+Hemoglobin 140 g/L 115-150
+Platelets 210 10^9/L 125-350
+Protein negative
+ReviewMarker 7 widgets 1-5
+No patient data. Values are fabricated for software verification.

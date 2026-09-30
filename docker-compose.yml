@@ -1,0 +1,43 @@
+services:
+  med-report:
+    build: .
+    init: true
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      CONTAINER_LOCAL_ONLY: "1"
+      AI_MODE: ${AI_MODE:-mock}
+      GLM_API_KEY: ${GLM_API_KEY:-}
+      GLM_MODEL: ${GLM_MODEL:-glm-4.7}
+      APP_ORIGIN: http://localhost:3001
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      OMP_THREAD_LIMIT: ${OMP_THREAD_LIMIT:-2}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-20}
+      MAX_PAGES: ${MAX_PAGES:-20}
+      MAX_OCR_PAGES: ${MAX_OCR_PAGES:-8}
+      EXTRACTION_TIMEOUT_MS: ${EXTRACTION_TIMEOUT_MS:-25000}
+      MAX_QUEUE: ${MAX_QUEUE:-32}
+    volumes:
+      - ./data:/app/data
+      - ./file:/app/file
+      - ./logs:/app/logs
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: ${MEM_LIMIT:-12g}
+    cpus: ${CPU_LIMIT:-8}

@@ -1,0 +1,23 @@
+name: Validate local report workflow
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AI_MODE: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install local OCR tools
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim antiword
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
