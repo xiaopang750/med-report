@@ -1,6 +1,8 @@
 services:
   med-report:
-    build: .
+    build:
+      context: .
+      target: ${DOCKER_TARGET:-cloud}
     init: true
     ports:
       - "127.0.0.1:3001:3001"
@@ -10,6 +12,12 @@ services:
       CONTAINER_LOCAL_ONLY: "1"
       AI_MODE: ${AI_MODE:-mock}
       GLM_API_KEY: ${GLM_API_KEY:-}
+      PARSING_MODE: ${PARSING_MODE:-local}
+      GLM_FILE_PROVIDER: ${GLM_FILE_PROVIDER:-live}
+      GLM_FILE_API_KEY: ${GLM_FILE_API_KEY:-}
+      GLM_FILE_ENDPOINT: ${GLM_FILE_ENDPOINT:-https://open.bigmodel.cn/api/paas/v4/chat/completions}
+      GLM_FILE_TIMEOUT_MS: ${GLM_FILE_TIMEOUT_MS:-60000}
+      GLM_ENDPOINT: ${GLM_ENDPOINT:-https://open.bigmodel.cn/api/paas/v4/chat/completions}
       GLM_MODEL: ${GLM_MODEL:-glm-5.3}
       APP_ORIGIN: http://localhost:3001
       APP_TOKEN: ${APP_TOKEN:-}

@@ -174,6 +174,24 @@ beforeEach(() => {
       return respond({ ok: true });
     }
     if (!authenticated) return respond({ code: "UNAUTHORIZED" }, 401);
+    if (path === "/api/parsing")
+      return respond({
+        defaultMode: "local",
+        provider: "mock",
+        maxBytes: 20971520,
+      });
+    if (path === "/api/parsing/preview")
+      return respond({
+        previewId: "file-preview",
+        recipient: "open.bigmodel.cn",
+        endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        model: "glm-5.3-flash",
+        provider: "mock",
+        filename: body.filename,
+        size: body.size,
+        sha256: body.sha256,
+        warning: "发送完整原文件，不会脱敏",
+      });
     if (path === "/api/health")
       return respond({
         ok: true,
@@ -772,6 +790,16 @@ describe("Chinese report workspace components", () => {
     });
     await waitFor(() =>
       expect(
+        (
+          screen.getByRole("button", {
+            name: "上传并解析",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "上传并解析" }));
+    await waitFor(() =>
+      expect(
         calls.some((c) => c.path === "/api/reports" && c.method === "POST"),
       ).toBe(true),
     );
@@ -783,6 +811,67 @@ describe("Chinese report workspace components", () => {
     expect(
       await screen.findByRole("heading", { name: "新报告.pdf" }),
     ).toBeDefined();
+  });
+  it("requires a file-specific unchecked consent before GLM upload and resets it on mode change", async () => {
+    await ready();
+    const file = new File(["%PDF-fictional"], "新报告.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(screen.getByLabelText("选择报告文件"), {
+      target: { files: [file] },
+    });
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("文件解析模式") as HTMLSelectElement).disabled,
+      ).toBe(false),
+    );
+    fireEvent.change(screen.getByLabelText("文件解析模式"), {
+      target: { value: "glm" },
+    });
+    expect(
+      (screen.getByRole("button", { name: "上传并解析" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      calls.some((c) => c.path === "/api/reports" && c.method === "POST"),
+    ).toBe(false);
+    fireEvent.click(
+      screen.getByRole("button", { name: "核对接收方与完整文件上传" }),
+    );
+    const consent = await screen.findByRole("checkbox", {
+      name: /我已核对接收方/,
+    });
+    expect((consent as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/发送完整原文件/)).toBeDefined();
+    fireEvent.click(consent);
+    fireEvent.change(screen.getByLabelText("文件解析模式"), {
+      target: { value: "local" },
+    });
+    fireEvent.change(screen.getByLabelText("文件解析模式"), {
+      target: { value: "glm" },
+    });
+    expect(
+      (screen.getByRole("button", { name: "上传并解析" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("button", { name: "核对接收方与完整文件上传" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /我已核对接收方/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "上传并解析" }));
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.path === "/api/reports" && c.method === "POST"),
+      ).toBe(true),
+    );
+    const form = calls.find(
+      (c) => c.path === "/api/reports" && c.method === "POST",
+    )!.body as FormData;
+    expect(form.get("mode")).toBe("glm");
+    expect(form.get("consent")).toBe("true");
+    expect(form.get("previewId")).toBe("file-preview");
   });
   it("closes editing dialogs on Escape without persisting changes", async () => {
     await ready();

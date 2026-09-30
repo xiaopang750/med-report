@@ -1,6 +1,6 @@
 # 医疗报告分析 · med-report
 
-本地优先的检验报告结构化与辅助分析工作台。React + TypeScript 前端、Bun 服务端、SQLite、CPU 本地 OCR。支持上传 → 文字提取/OCR → 证据复核 → 手工标注 → 模板映射 → 规则校验 → 经确认的 AI 辅助解读 → 导出。
+本地优先的检验报告结构化与辅助分析工作台。React + TypeScript 前端、Bun 服务端、SQLite、可选本地 OCR / 经逐文件授权的 GLM 直传解析。支持上传 → 文字提取/OCR → 证据复核 → 手工标注 → 模板映射 → 规则校验 → 经确认的 AI 辅助解读 → 导出。
 
 > 这是可运行的 V1.0 展示与产品化基础版，不是医疗器械或临床决策系统。任何结果都必须回看原文并经专业人员复核；不能用来独立诊断、开药或替代检验审核。演示数据完全虚构，演示规则不构成临床阈值。没有真实样本时，不承诺任意医院版式均可准确识别。
 
@@ -29,16 +29,15 @@ docker compose down
 
 ### 本地开发
 
-安装 Bun 1.4.2+，Poppler、Tesseract（简体中文和英语）、antiword。Debian/Ubuntu 示例：
+安装 Bun 1.4.2+ 即可开发；云解析无需 Poppler、Tesseract、antiword。默认本地模式不出网。无密钥模拟体验：
 
 ```sh
-sudo apt-get install poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim antiword
 cp .env.example .env
 bun install --frozen-lockfile
-bun run dev
+PARSING_MODE=glm GLM_FILE_PROVIDER=mock bun run dev
 ```
 
-开发页面 http://localhost:5173 。Vite 将 `/api` 转发到 3001。生产方式：
+开发页面 http://localhost:5173 ，使用 `admin/admin` 登录。Bun 从项目根目录自动读取 `.env`；示例允许 5173 和 3001 的 localhost/127.0.0.1 Origin。Vite 将 `/api` 转发到 Bun 3001，cookie 保持同源；没有密钥进入 Vite 环境变量。端口保持默认即可。生产方式：
 
 ```sh
 bun run build
@@ -59,7 +58,7 @@ bun run start
 ## 格式支持与已知限制
 
 - PDF：优先使用 Poppler 提取文字；缺少可用文字的页面再本地渲染并 OCR。页数、进程时限和上传大小均受限
-- PNG/JPEG：Tesseract 本地 OCR。Docker 内含 `chi_sim+eng`，不依赖 GPU 或第三方 OCR。清晰打印文本优于手写、复杂表格、旋转/低清图片
+- PNG/JPEG：Tesseract 本地 OCR。可选 `local-ocr` Docker 目标内含 `chi_sim+eng`，不依赖 GPU 或第三方 OCR。清晰打印文本优于手写、复杂表格、旋转/低清图片
 - DOCX：Mammoth 文字提取，使用段落/行证据。Word 是流式格式，原始物理页码不可靠；不能把逻辑页当作 Word 排版页。嵌入图片没有保证自动 OCR
 - DOC：通过 antiword 提取旧版 Word 文字；缺少组件时返回明确提示。图片型 DOC 不保证识别
 - TXT：UTF-8 文本，用于演示和测试
@@ -67,9 +66,26 @@ bun run start
 - 自动字段提取是保守启发式，不是经过临床验证的版面模型。识别不完整、单位不匹配或缺少参考范围时显示“不确定”，不会臆造阈值或单位换算
 - 原始文件保留本地；当前证据视图基于提取文本，不等于精确 PDF 框选定位/全格式原生预览
 
+## GLM-5.3-Flash 文件解析（与医疗解读独立）
+
+- `PARSING_MODE=local` 为默认；本地失败只显示错误/缺失工具，不会自动出网。选择上传文件后可以显式改为 GLM 或本地。
+- 无工具体验：`PARSING_MODE=glm GLM_FILE_PROVIDER=mock bun run dev`。MOCK 返回固定虚构内容，不识别上传文件、不访问模型，也不需要密钥。
+- 实时文件解析：仅在本机 `.env` 设置 `PARSING_MODE=glm`、`GLM_FILE_PROVIDER=live`、`GLM_FILE_API_KEY`。模型固定 `glm-5.3-flash`，服务端 `GLM_FILE_ENDPOINT` 默认普通 API。不得复用此前在聊天公开过的凭证；本交付没有获取、使用或验证任何真实密钥。
+- 医疗解读仍使用 `AI_MODE` / `GLM_API_KEY` / `GLM_MODEL=glm-5.3`，不会因开启文件解析而自动启用。
+- 每次先选择文件、模式、生成确认，再核对接收域名/完整端点、文件名、大小、SHA-256 和完整文件发送提示，手动勾选同意。预览阶段仅向本机发送元数据。上传会发送完整原件，含身份信息、隐藏内容、附件，不进行脱敏；自定义端点运营方可能不是智谱。取消则不发送文件。后端将同意绑定当前会话、文件字节摘要/名称/大小、GLM 模式和端点，10 分钟失效、单次使用。配置变更/重启/重试需重新确认。
+- 模型输出严格检查 JSON `{lines: string[]}`、数量、长度和完成状态；不执行指令或工具调用。模型转写行标为 `method=model`、`page=null`，无原文页码/坐标，自动候选保持低置信度和“不确定”；人工标注后才使用已有规则。原件仍保存在本机并可下载核对。模板、历史、导出沿用已有工作流；模型转写不等于逐字证据，完整性和数值正确性无法由 schema 保证。
+- 请求不重试，默认超时 60 秒（配置 1–120 秒）；响应最大 1 MiB，转写最大 2000 行/每行 1000 字符/总计 20 万字符。共享有界队列默认并发 2、排队 32。失败可能已传输，不自动换模式或端点。
+- 应用限额：完整文件最大 20 MiB（同时受 `MAX_UPLOAD_MB` 更小值约束）；图片最大 4 MiB、每边不超过 6000。直传不使用本地 PDF 工具，因此不能按本地 `MAX_PAGES` 裁页；发送的是完整文件，超长文件需先手工拆分，不保证全页覆盖。
+
+2026-09-30 重新核对 [Flash 模型文档](https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash) 和 [对话补全参数](https://docs.bigmodel.cn/api-reference/模型-api/对话补全.md)：图片 `image_url.url` 使用 Base64 Data URL；文件 `type=file`、`file:{filename,file_data}`，与 `file_id/file_url` 三选一。请求开启 thinking，使用 low 推理和 8192 token；未盲套旧视觉模型参数或假设视觉接口支持 JSON response_format。官方文件上限 50M、图片小于 5M，本应用更保守。PDF 有明确文件示例；Word 泛称支持，但 **DOC/DOCX 仅模拟验证，真实格式兼容性未实测、不能保证**。
+
+用户提供的 Coding 技术端点是 `https://open.bigmodel.cn/api/coding/paas/v4/chat/completions`；可以通过上述服务端端点变量配置，但技术可达不代表账户/条款允许。[Coding Plan 官方适用范围](https://docs.bigmodel.cn/cn/coding-plan/overview) 限定支持的编程工具场景，不应用于本自建医疗应用生产调用；生产默认普通 API 按量服务，需自行核对服务商授权和数据处理条款。本文不声称 Coding 或普通端点已实测成功。
+
+显式本地 OCR 模式：Debian/Ubuntu 安装 `poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim antiword` 后，选择本地解析。TXT / DOCX 本地文字提取不需系统 OCR；图片型 Word 不保证识别。Docker 默认 `cloud` 轻量目标不安装这些工具；需本地 OCR 时执行 `DOCKER_TARGET=local-ocr docker compose up --build -d`。镜像轻量化不会改变默认不出网策略，仍需选择 GLM 并同意；可以在 `.env` 设置 `GLM_FILE_PROVIDER=mock` 先验证流程。
+
 ## AI 接口与隐私
 
-固定默认提供商接口：`https://open.bigmodel.cn/api/coding/paas/v4/chat/completions`。兼容请求采用 `messages` 和可配置 `model`。此交付未使用真实密钥，未调用真实服务；模型名称、Coding 端点可用模型及账户授权必须在用户自己的账户中验证。
+默认提供商接口：`https://open.bigmodel.cn/api/paas/v4/chat/completions`，可通过服务端 `GLM_ENDPOINT` 配置。兼容请求采用 `messages` 和可配置 `model`。此交付未使用真实密钥，未调用真实服务；模型名称、Coding 端点可用模型及账户授权必须在用户自己的账户中验证。
 
 ```dotenv
 AI_MODE=mock

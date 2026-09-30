@@ -1,3 +1,10 @@
+import {
+  fileConfig,
+  createFilePreview,
+  consumeFileConsent,
+  DEFAULT_PARSING_MODE,
+  validateCloudFile,
+} from "./file-parser";
 import { join, extname, resolve } from "node:path";
 import { chmod, unlink } from "node:fs/promises";
 import {
@@ -276,6 +283,12 @@ export async function handle(req: Request): Promise<Response> {
         limits: LIMITS,
         queue: queueState(),
       });
+    if (path === "/api/parsing" && method === "GET") return json(fileConfig());
+    if (path === "/api/parsing/preview" && method === "POST") {
+      const input = await body(req);
+      keys(input, ["mode", "filename", "size", "sha256"]);
+      return json(createFilePreview(input, cookieId || "bearer"));
+    }
     if (path === "/api/config") {
       if (method === "GET") return json(safeConfig());
       if (method === "PUT") {
@@ -353,7 +366,8 @@ export async function handle(req: Request): Promise<Response> {
       if (items.length !== 1 || !(items[0] instanceof File))
         bad("Upload exactly one file");
       for (const key of form.keys())
-        if (key !== "file") bad("Unexpected multipart field");
+        if (!["file", "mode", "previewId", "consent"].includes(key))
+          bad("Unexpected multipart field");
       const file = items[0];
       if (file.size > LIMITS.maxFileBytes)
         throw new AppError(
@@ -366,6 +380,13 @@ export async function handle(req: Request): Promise<Response> {
         id = crypto.randomUUID(),
         storedPath = join(FILE_DIR, `${id}.${verified.extension}`),
         now = new Date().toISOString();
+      const mode = form.get("mode") || DEFAULT_PARSING_MODE;
+      if (mode !== "local" && mode !== "glm") bad("Invalid parsing mode");
+      if (mode === "glm") {
+        validateCloudFile(bytes, verified.extension);
+        consumeFileConsent(form, bytes, file, cookieId || "bearer");
+      } else if (form.has("previewId") || form.has("consent"))
+        bad("Cloud consent cannot be used in local mode");
       await Bun.write(storedPath, bytes);
       await chmod(storedPath, 0o600);
       const report: Report = {
@@ -389,7 +410,12 @@ export async function handle(req: Request): Promise<Response> {
         storedPath,
       };
       try {
-        enqueue(report, storedPath, verified.extension);
+        enqueue(
+          report,
+          storedPath,
+          verified.extension,
+          mode as "local" | "glm",
+        );
       } catch (error) {
         await unlink(storedPath).catch(() => {});
         throw error;

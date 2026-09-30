@@ -1,10 +1,10 @@
 export type Status = "normal" | "high" | "low" | "abnormal" | "uncertain";
 export interface Anchor {
   id: string;
-  page: number;
+  page: number | null;
   line: number;
   text: string;
-  method: "text" | "ocr" | "docx" | "doc" | "manual";
+  method: "text" | "ocr" | "docx" | "doc" | "manual" | "model";
 }
 export interface ReferenceRange {
   low?: number;

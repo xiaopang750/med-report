@@ -3,8 +3,8 @@ import { AppError, bad, strings } from "./errors";
 import { CATALOG, normalize, knownUnit } from "./evaluate";
 import { LIMITS } from "./extract";
 import { get, remove, savePreview, audit } from "./db";
-export const AI_ENDPOINT =
-  "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions";
+import { providerEndpoint } from "./file-parser";
+export const AI_ENDPOINT = providerEndpoint(process.env.GLM_ENDPOINT);
 export const PRIVACY_WARNING =
   "自动脱敏并不完美。请逐项核对预览，确认不含姓名、身份信息或其他不应外传的信息；未勾选的原文和原文件不会发送。AI 仅供信息整理，不构成诊断或治疗建议。";
 const LIMITATION =
@@ -252,6 +252,9 @@ export async function analyze(
     diseaseContext: config.diseaseContext,
   };
   const limitations = [
+    ...(report.anchors.some((a) => a.method === "model")
+      ? ["来源包含模型转写，不是逐字原文；引用仅指向转写行，须人工核对原件。"]
+      : []),
     LIMITATION,
     "结果只覆盖已选且通过最小化检查的证据，不能视为完整报告结论。",
     "模型输出和自动脱敏均可能有误，必须由人核对原始证据。",

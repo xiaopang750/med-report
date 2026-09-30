@@ -1,3 +1,21 @@
+# GLM 文件解析分支验证记录
+
+验证日期：2026-09-30；基于远端 main `a380aa2`。本节为本分支结果，下方保留此前基线记录，不能把旧环境结果当作本次实测。
+
+- Bun 1.4.2：类型检查、全套后端/前端测试、生产构建通过。最终 106 通过、1 跳过、0 失败，622 次断言，8 个测试文件；额外验证 Bun 自动读取本地 `.env`。新增文件协议测试使用内存 fetch，端到端使用固定虚构 mock provider，无真实密钥和 GLM 调用。
+- 无 OCR 系统工具：子进程 PATH 指向空目录，PNG/PDF/DOCX 经登录、文件摘要预览、明确同意、队列、转写、人工标注、下载原件流程通过；显式本地 PDF 模式正确提示缺 Poppler，没有云回退。
+- 安全回归：未登录、未同意、授权文件/会话不符、过期、复用、模式切换重置确认；错误 JSON、超长响应结构、截断、HTTP 429、超时、不重试；模型候选无页码、低置信度、待复核；既有报告注入/导出转义/日志敏感信息测试通过。
+- 前端 21 项 DOM 测试通过，含新增云上传同意交互；实际 Chromium（本环境允许 loopback）1440px 桌面与 390px 手机截图检查完成。真实 `bun dev` → Vite 5173 → Bun 3001、admin/admin cookie 登录、PDF 模拟解析与 DOCX 手机上传确认通过。截图保存在工作区外 `/tmp/med-cloud-{consent,result,mobile}.png`，仅包含虚构样例。
+- 依赖镜像 registry.npmmirror.com 返回 403；在隔离临时目录把相同锁定版本的下载地址替换为 npm 官方 registry 后冻结安装，复制依赖用于检查，未更改仓库锁文件或镜像配置。
+- Docker cloud 目标构建已尝试，Docker Hub 基础镜像拉取返回 Forbidden / 403，未完成镜像运行验收。local-ocr 目标也未运行。没有绕过限制。
+- 本机中文 OCR `chi_sim` 缺失：该既有测试跳过；其余本地工具已有测试照常运行。
+- 未验证：任何真实 GLM 请求/账户/效果、DOC/DOCX 云端实际支持、临床准确率、目标 16 核/32GB 容量、部署；没有部署或合并。
+- 推送前检查 `.env`/原始报告/数据库/log 未纳入提交；仅使用既有虚构 fixtures。CI 状态以草稿 PR 精确提交为准。
+
+复现：`bun run typecheck && bun test && bun run build`；云端无工具测试：`bun test tests/file-cloud-e2e.test.ts tests/file-parser.test.ts`。本地 dev：`cp .env.example .env && bun install --frozen-lockfile`，再 `PARSING_MODE=glm GLM_FILE_PROVIDER=mock bun run dev`。真实模式需用户安全配置新的服务端密钥并逐文件同意，不能把模拟通过视为 GLM 实测成功。
+
+---
+
 # 验证记录
 
 验证日期：2026-09-30。所有功能验证使用虚构样本，不含真实患者数据。AI 模型传输测试使用内存模拟的 fetch，未调用真实提供商。

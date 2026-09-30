@@ -9,7 +9,7 @@ import type { Subprocess } from "bun";
 const ROOT = resolve(import.meta.dir, "..");
 const FIXTURES = join(ROOT, "fixtures");
 const KEY_SENTINEL = "test-only-never-use-secret-sentinel-8492";
-const INVALID_ENDPOINT = "http://127.0.0.1:1/forbidden-network-test";
+const INVALID_ENDPOINT = "https://example.invalid/forbidden-network-test";
 const TEST_ROOT = mkdtempSync(join(tmpdir(), "report-studio-tests-"));
 let server: Subprocess | undefined;
 let base = "";

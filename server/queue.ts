@@ -1,3 +1,4 @@
+import { extractCloud } from "./file-parser";
 import { all, get, saveReport, audit, config, rules, templates } from "./db";
 import { extract, LIMITS } from "./extract";
 import {
@@ -8,7 +9,12 @@ import {
 } from "./evaluate";
 import type { Job, Report } from "./types";
 import { AppError } from "./errors";
-type Work = { reportId: string; path: string; extension: string };
+type Work = {
+  reportId: string;
+  path: string;
+  extension: string;
+  mode: "local" | "glm";
+};
 const waiting: Work[] = [];
 let active = 0;
 export function queueState() {
@@ -45,7 +51,12 @@ export function evaluate(report: Report): Report {
         : "ready";
   return report;
 }
-export function enqueue(report: Report, path: string, extension: string) {
+export function enqueue(
+  report: Report,
+  path: string,
+  extension: string,
+  mode: "local" | "glm" = "local",
+) {
   assertCapacity();
   report.job = {
     id: crypto.randomUUID(),
@@ -55,7 +66,7 @@ export function enqueue(report: Report, path: string, extension: string) {
   };
   report.status = "processing";
   saveReport(report);
-  waiting.push({ reportId: report.id, path, extension });
+  waiting.push({ reportId: report.id, path, extension, mode });
   queueMicrotask(pump);
 }
 function pump() {
@@ -78,7 +89,14 @@ async function run(work: Work) {
   };
   saveReport(report);
   try {
-    const result = await extract(work.path, work.extension);
+    const result =
+      work.mode === "glm"
+        ? await extractCloud(
+            new Uint8Array(await Bun.file(work.path).arrayBuffer()),
+            work.extension,
+            report.mime,
+          )
+        : await extract(work.path, work.extension);
     report = get<Report>("reports", work.reportId)!;
     report.text = result.text;
     report.anchors = result.anchors;
