@@ -1,3 +1,4 @@
+import { FileUpload } from "./FileUpload";
 import {
   useEffect,
   useRef,
@@ -140,7 +141,7 @@ const splitText = (v: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 const getPages = (r: Pick<Report, "anchors">) =>
-  Math.max(0, ...(r.anchors || []).map((a) => a.page));
+  Math.max(0, ...(r.anchors || []).map((a) => a.page || 0));
 const errText = (e: unknown) =>
   e instanceof Error ? e.message : "操作失败，请稍后重试";
 const isAbnormal = (c: Candidate) =>
@@ -344,9 +345,9 @@ function AuthShell({ children }: { children: ReactNode }) {
           <div className="auth-local-note">
             <ShieldCheck size={19} aria-hidden="true" />
             <p>
-              文件在本地解析与保存
+              文件本地保存，云解析须逐次同意
               <br />
-              <span>AI 仅接收经你确认的脱敏片段</span>
+              <span>解读使用确认片段；云转写发送完整文件</span>
             </p>
           </div>
         </section>
@@ -652,6 +653,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     id: string;
     label: string;
   } | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const selectedRef = useRef<string | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
@@ -787,28 +789,20 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       setBusy("");
     }
   };
-  const upload = async (file?: File) => {
-    if (!file) return;
-    if (file.size > Number(health?.limits?.maxFileBytes || 20 * 1024 * 1024)) {
-      notify("文件超过本地上传上限，请压缩或拆分后重试", true);
-      return;
-    }
-    await run("upload", async () => {
-      const form = new FormData();
-      form.append("file", file);
+  const upload = async (form: FormData) => {
+    setBusy("upload");
+    try {
       const r = await api<Report>("/reports", { method: "POST", body: form });
       updateReport(r);
       setSelected([]);
       setTab("fields");
       setPage("workspace");
-      notify(
-        r.status === "processing"
-          ? "报告已加入本地解析队列"
-          : "报告已导入，请复核提取结果",
-      );
+      setPendingFile(null);
+      notify("报告已加入解析队列，请核对来源和不确定性提示");
       await refreshLists();
-    });
-    if (uploadRef.current) uploadRef.current.value = "";
+    } finally {
+      setBusy("");
+    }
   };
   const loadDemo = () =>
     run("demo", async () => {
@@ -993,9 +987,9 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
               你的数据，由你掌握
             </div>
             <p>
-              文件在本地解析与保存
+              文件本地保存，云解析须逐次同意
               <br />
-              AI 仅接收经你确认的脱敏片段
+              解读使用确认片段；云转写发送完整文件
             </p>
           </div>
           <div className="workspace-person">
@@ -1133,10 +1127,22 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             ref={uploadRef}
             style={{ display: "none" }}
             type="file"
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.txt"
             aria-label="选择报告文件"
-            onChange={(e) => upload(e.target.files?.[0])}
+            onChange={(e) => {
+              setPendingFile(e.target.files?.[0] || null);
+              e.target.value = "";
+            }}
           />
+          {pendingFile && (
+            <FileUpload
+              key={`${pendingFile.name}-${pendingFile.lastModified}`}
+              file={pendingFile}
+              submit={upload}
+              cancel={() => setPendingFile(null)}
+              busy={!!busy}
+            />
+          )}
           {error && (
             <div className="alert error">
               <AlertCircle size={16} />
@@ -1172,7 +1178,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                       label="当前报告提取"
                       value={String(candidates.length).padStart(2, "0")}
                       unit="项研究指标"
-                      note="原文可追溯"
+                      note="提取结果须复核"
                     />
                     <Stat
                       icon={Activity}
@@ -1200,7 +1206,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                               health?.limits?.maxFileBytes || 20 * 1024 * 1024,
                             ),
                           )}{" "}
-                          · 本地解析
+                          · 可选本地 / GLM
                         </span>
                       </div>
                       <div
@@ -1223,7 +1229,8 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                         onDrop={(e) => {
                           e.preventDefault();
                           setDragover(false);
-                          if (!busy) upload(e.dataTransfer.files[0]);
+                          if (!busy)
+                            setPendingFile(e.dataTransfer.files[0] || null);
                         }}
                       >
                         <div className="upload-illustration">
@@ -1246,7 +1253,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                           <div className="drop-sub">
                             原文件本地保存，自动识别文本与表格内容
                             <br />
-                            扫描件及图片使用本地 OCR，解析后请人工核对
+                            选择本地 OCR 或经同意的云转写，结果须人工核对
                           </div>
                           {busy === "upload" ? (
                             <div className="upload-progress" />
@@ -1255,7 +1262,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                               <span className="format">PDF</span>
                               <span className="format">DOC / DOCX</span>
                               <span className="format">JPG / PNG</span>
-                              <span className="format">TIFF / WEBP</span>
+                              <span className="format">TXT</span>
                             </div>
                           )}
                         </div>
@@ -1672,7 +1679,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                     ) : (
                       <Empty
                         title="你的研究，从第一份报告开始"
-                        description="上传 Word、PDF 或图片报告，或使用合成示例体验完整流程。文件在本地解析，AI 分析始终由你确认。"
+                        description="上传 Word、PDF 或图片报告，或使用合成示例体验完整流程。默认本地解析，云转写和 AI 分析分别由你确认。"
                       >
                         <Button small variant="soft" onClick={loadDemo}>
                           <FlaskConical size={13} />
@@ -2047,7 +2054,8 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           )}
           <div className="bottom-note">
             <ShieldCheck size={10} />
-            本地解析 · 证据可追溯 · 研究辅助工具，不提供医疗诊断或治疗建议
+            本地优先 · 模型转写须核对原件 ·
+            研究辅助工具，不提供医疗诊断或治疗建议
           </div>
         </main>
       </div>
@@ -2440,7 +2448,9 @@ function Evidence({
           <div className="evidence-doc-title">
             {report?.source === "demo"
               ? "研究示例 · 检验报告"
-              : "报告原文 · 证据片段"}
+              : anchors.some((a) => a.method === "model")
+                ? "模型转写 · 非逐字原文 · 无原文坐标"
+                : "报告原文 · 证据片段"}
           </div>
           {anchors.map((a) => (
             <div
@@ -2454,10 +2464,15 @@ function Evidence({
                 checked={selected.includes(a.id)}
                 onClick={(e) => e.stopPropagation()}
                 onChange={() => onToggle(a.id)}
-                aria-label={`选择第 ${a.page} 页第 ${a.line} 行`}
+                aria-label={
+                  a.method === "model"
+                    ? `选择模型转写第 ${a.line} 行`
+                    : `选择第 ${a.page} 页第 ${a.line} 行`
+                }
               />
               <span className="line-number">
-                {a.page}:{String(a.line).padStart(2, "0")}
+                {a.method === "model" ? "模型" : a.page}:
+                {String(a.line).padStart(2, "0")}
               </span>
               <span className="line-text">{a.text}</span>
               {focused === a.id && (
@@ -2481,7 +2496,7 @@ function Evidence({
           title={
             report?.status === "processing" ? "正在提取原文" : "暂无可用原文"
           }
-          description="解析后的每段证据都会标注页码与行号。"
+          description="本地提取显示逻辑页行；模型转写无原文坐标，须下载原件复核。"
           icon={FileSearch}
         />
       )}
@@ -2608,8 +2623,8 @@ function historyLabel(action: string) {
     export: "导出报告",
     delete_annotation: "删除人工标注",
     report_uploaded: "导入研究报告",
-    extraction_completed: "完成本地解析",
-    extraction_failed: "本地解析失败",
+    extraction_completed: "完成文件解析",
+    extraction_failed: "文件解析失败",
     demo_created: "创建合成示例",
     annotation_added: "保存人工标注",
     annotation_removed: "删除人工标注",
@@ -2701,7 +2716,8 @@ function FieldModal({
           >
             {anchors.map((a) => (
               <option key={a.id} value={a.id}>
-                P{a.page}:{a.line} · {a.text.slice(0, 85)}
+                {a.method === "model" ? "模型转写" : `P${a.page}`}:{a.line} ·{" "}
+                {a.text.slice(0, 85)}
               </option>
             ))}
           </select>

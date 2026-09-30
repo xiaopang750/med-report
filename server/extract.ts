@@ -117,7 +117,7 @@ export async function capabilities() {
   return capabilitiesCache;
 }
 
-function jpegDimensions(
+export function jpegDimensions(
   bytes: Uint8Array,
 ): { width: number; height: number } | null {
   const b = Buffer.from(bytes);

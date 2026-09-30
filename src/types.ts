@@ -1,7 +1,7 @@
 export type Page = "workspace" | "history" | "templates" | "rules" | "settings";
 export type Anchor = {
   id: string;
-  page: number;
+  page: number | null;
   line: number;
   text: string;
   method: string;

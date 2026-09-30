@@ -186,20 +186,51 @@ export const openapi = {
         responses: responses(ref("Config")),
       },
     },
+    "/api/parsing": {
+      get: {
+        summary: "File parser configuration (no credentials)",
+        responses: responses({ type: "object" }),
+      },
+    },
+    "/api/parsing/preview": {
+      post: {
+        summary:
+          "Create session-bound one-use GLM consent preview, expires in 10 minutes; metadata only, no file bytes",
+        requestBody: body(
+          object(
+            {
+              mode: { enum: ["glm"] },
+              filename: string,
+              size: number,
+              sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+            },
+            ["mode", "filename", "size", "sha256"],
+          ),
+        ),
+        responses: responses({ type: "object" }),
+      },
+    },
     "/api/reports": {
       get: {
         summary: "List report history",
         responses: responses(object({ reports: array(ref("ReportSummary")) })),
       },
       post: {
-        summary: "Upload for bounded local asynchronous extraction",
+        summary:
+          "Upload for bounded local or explicitly consented GLM extraction",
         requestBody: {
           required: true,
           content: {
             "multipart/form-data": {
-              schema: object({ file: { type: "string", format: "binary" } }, [
-                "file",
-              ]),
+              schema: object(
+                {
+                  file: { type: "string", format: "binary" },
+                  mode: { enum: ["local", "glm"] },
+                  previewId: string,
+                  consent: { type: "string", enum: ["true"] },
+                },
+                ["file"],
+              ),
             },
           },
         },
@@ -208,6 +239,9 @@ export const openapi = {
             ref("Report"),
             "Accepted; poll report or job while processing",
           ),
+          "400": error,
+          "401": error,
+          "403": error,
           "413": error,
           "415": error,
           "429": error,
@@ -377,10 +411,10 @@ export const openapi = {
       Anchor: object(
         {
           id: string,
-          page: { type: "integer" },
+          page: { type: "integer", nullable: true },
           line: { type: "integer" },
           text: string,
-          method: { enum: ["text", "ocr", "docx", "doc", "manual"] },
+          method: { enum: ["text", "ocr", "docx", "doc", "manual", "model"] },
         },
         ["id", "page", "line", "text", "method"],
       ),

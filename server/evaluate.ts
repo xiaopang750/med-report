@@ -219,7 +219,10 @@ export function extractCandidates(
     }
     const range = reference(tail);
     const confidence =
-      anchor.method === "ocr" || !matched || uncertain
+      anchor.method === "ocr" ||
+      anchor.method === "model" ||
+      !matched ||
+      uncertain
         ? "low"
         : range
           ? "high"
@@ -311,12 +314,14 @@ export function evaluateCandidates(
     }
     if (
       c.source !== "manual" &&
-      c.anchorIds.some(
-        (id) => anchors.find((a) => a.id === id)?.method === "ocr",
+      c.anchorIds.some((id) =>
+        ["ocr", "model"].includes(
+          anchors.find((a) => a.id === id)?.method || "",
+        ),
       )
     ) {
       c.reason =
-        "OCR candidate: confirm value, decimal point and unit with a manual annotation";
+        "OCR/model candidate: confirm value, decimal point and unit with a manual annotation";
       return c;
     }
     if (!knownUnit(c.unit)) {

@@ -2524,3 +2524,30 @@ svg {
     width: 29px;
   }
 }
+
+.file-upload-review {
+  margin-bottom: 24px;
+}
+.file-upload-review > p,
+.file-upload-review > label {
+  margin: 12px 0;
+  display: block;
+}
+.file-upload-review .alert {
+  margin: 16px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #725824;
+}
+.file-upload-review .alert p {
+  margin: 8px 0;
+}
+.file-upload-review .button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+.file-upload-review select {
+  max-width: 100%;
+}

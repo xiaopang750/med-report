@@ -39,3 +39,12 @@ Upload returns HTTP 202 with processing report and job. Poll report or GET /api/
 
 ## Privacy and context
 AI preview includes `payload` with the exact provider JSON body; the API key is never included. Selected evidence is reconstructed from recognized clinical fields, numeric or allowlisted qualitative values, supported units, and safe structured bounds. Unrecognized free text is withheld. Original source text and identifiers are never forwarded. Clinical context is allowlisted by keyword for egress; full user-defined context remains local. Preview warnings explicitly disclose omitted context. Live output must cite approved anchors and numeric tokens must occur in cited evidence; any remaining narrative must be manually verified.
+
+
+## GLM 文件解析
+
+`GET /api/parsing` 返回非敏感文件解析配置；`POST /api/parsing/preview` 接收 JSON `{mode:"glm",filename,size,sha256}`，返回一次性 previewId、接收端点、模型、提供商模式、完整文件提示与到期时间。两者均需登录（或脚本 bearer）。
+
+`POST /api/reports` multipart 除 file 外接受 mode=local|glm；glm 必须附 previewId 与字面字符串 consent=true。同意绑定同一会话、原始文件名/大小/SHA-256、模式、端点/提供商模式，10 分钟有效，一次消费；未同意/不匹配返回 403，限额 413，队列满 429。不接受客户端端点、模型、原文坐标。无 token 的客户端无法隐式云上传；本地模式不使用云 token。
+
+model 类型 anchor 的 page 为 null、line 仅转写行索引，非来源行坐标。自动候选低置信度且待人工复核；人工标注/模板/历史与导出 API 保持不变。队列错误保留原件，脱敏错误信息可通过 report.job.error 与 warnings 获取。默认端点为普通 paas/v4，解读和文件解析分别配置。
