@@ -1,6 +1,9 @@
 # Report Studio API contract
-All routes `/api`; JSON `{error,code}` on failure. IDs strings. All report parsing local. No auth in loopback-only default; set APP_TOKEN for Bearer authentication. Browser mutations must same-origin; development proxy allowed through APP_ORIGIN. Config cannot expose/write key.
+All routes `/api`; JSON `{error,code}` on failure. IDs strings. All report parsing local. Demo login admin/admin issues an eight-hour in-memory HttpOnly SameSite=Strict session cookie. All business endpoints require this session or the optional APP_TOKEN Bearer credential; this remains a local synthetic demo, not production authentication. Restart invalidates sessions. Browser mutations must same-origin; development proxy allowed through APP_ORIGIN. Config cannot expose/write key.
 
+- `GET /api/auth/session` -> `{authenticated,username:"admin"|null,demo:true}` (public; does not treat Bearer credentials as a browser login)
+- `POST /api/auth/login` `{username:"admin",password:"admin"}` -> session status plus `Set-Cookie`; wrong credentials HTTP401 `INVALID_CREDENTIALS`; rotates current session
+- `POST /api/auth/logout` -> `{ok:true}`; revokes current session and expires cookie (idempotent, public)
 - `GET /api/health` -> `{ok,version,mode,capabilities:{pdftotext,pdftoppm,tesseract,antiword,ocrLanguages},limits}`
 - `GET /api/config` -> `{mode:'mock'|'live',model,endpoint,keyConfigured,domain,diseaseContext,privacyWarning}`
 - `PUT /api/config` `{mode?,model?,domain?,diseaseContext?}` -> same

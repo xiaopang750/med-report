@@ -88,6 +88,20 @@ const request = (p: ReturnType<typeof preview>) => ({
 });
 
 await run(
+  "GLM-5.3 preview matches the transmitted thinking-enabled payload",
+  async () => {
+    const cfg = { ...config, model: "glm-5.3" };
+    const p = createPreview(report, cfg, ["p1-l1", "p1-l2"]);
+    await analyze(report, cfg, request(p));
+    const payload = requests.at(-1)!.payload;
+    assert.deepEqual(payload, p.payload);
+    assert.equal(payload.model, "glm-5.3");
+    assert.deepEqual(payload.thinking, { type: "enabled" });
+    assert.equal(payload.reasoning_effort, "low");
+    assert.equal(payload.max_tokens, 8192);
+  },
+);
+await run(
   "transmits only the previewed minimized payload and never identifier-only lines",
   async () => {
     offered = {

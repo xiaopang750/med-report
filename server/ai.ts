@@ -60,7 +60,10 @@ function buildPayload(
       },
     ],
     temperature: 0.1,
-    max_tokens: 1800,
+    max_tokens: preview.model === "glm-5.3" ? 8192 : 1800,
+    ...(preview.model === "glm-5.3"
+      ? { thinking: { type: "enabled" }, reasoning_effort: "low" }
+      : {}),
   };
 }
 export function createPreview(

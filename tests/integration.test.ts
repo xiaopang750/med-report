@@ -15,6 +15,7 @@ let server: Subprocess | undefined;
 let base = "";
 let serverOutput = "";
 let health: any;
+let sessionCookie = "";
 let report: any;
 let templateId = "";
 let annotationId = "";
@@ -27,6 +28,7 @@ const ruleIds: string[] = [];
 
 async function api(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
+  if (sessionCookie) headers.set("cookie", sessionCookie);
   if (init.body && !(init.body instanceof FormData))
     headers.set("content-type", "application/json");
   const response = await fetch(`${base}/api${path}`, { ...init, headers });
@@ -153,6 +155,7 @@ beforeAll(async () => {
       GLM_API_KEY: KEY_SENTINEL,
       GLM_ENDPOINT: INVALID_ENDPOINT,
       AI_MODE: "mock",
+      GLM_MODEL: "",
       APP_TOKEN: "",
       APP_ORIGIN: base,
       OCR_CONCURRENCY: "1",
@@ -180,6 +183,14 @@ beforeAll(async () => {
       const result = await api("/health");
       if (result.response.ok) {
         health = result.data;
+        const login = await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ username: "admin", password: "admin" }),
+        });
+        if (!login.response.ok) throw new Error("Demo login failed");
+        sessionCookie = login.response.headers
+          .get("set-cookie")!
+          .split(";")[0]!;
         return;
       }
     } catch {
@@ -199,8 +210,14 @@ afterAll(async () => {
 });
 
 describe("local ingestion and stable evidence", () => {
+  test("default deployment without APP_TOKEN still requires a browser session", async () => {
+    expect((await fetch(`${base}/api/reports`)).status).toBe(401);
+    expect((await fetch(`${base}/api/config`)).status).toBe(401);
+    expect((await api("/reports")).response.ok).toBe(true);
+  });
   test("health discloses runtime capability and default is mock", async () => {
     expect(health.ok).toBe(true);
+    expect((await ok("/config")).model).toBe("glm-5.3");
     expect(health.capabilities).toHaveProperty("pdftotext");
     expect(health.capabilities).toHaveProperty("tesseract");
     const cfg = await ok("/config");
