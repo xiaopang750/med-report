@@ -44,6 +44,7 @@ import { seed, createDemo } from "./seed";
 import { AI_ENDPOINT, PRIVACY_WARNING, createPreview, analyze } from "./ai";
 import { exportReport } from "./export";
 import { openapi } from "./openapi";
+import { sessions, sessionId, sessionCookie } from "./auth";
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3001);
 const TOKEN = process.env.APP_TOKEN || "";
@@ -143,17 +144,6 @@ function verifyAccess(req: Request, url: URL) {
       "ORIGIN_REJECTED",
       "Cross-site requests are not allowed",
     );
-  if (
-    TOKEN &&
-    url.pathname.startsWith("/api/") &&
-    url.pathname !== "/api/health" &&
-    req.headers.get("authorization") !== `Bearer ${TOKEN}`
-  )
-    throw new AppError(
-      401,
-      "UNAUTHORIZED",
-      "A valid application Bearer token is required",
-    );
 }
 function parseFields(value: unknown): TemplateField[] {
   if (!Array.isArray(value) || !value.length || value.length > 100)
@@ -228,11 +218,55 @@ const inflightAnalysis = new Set<string>();
 export async function handle(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url),
-      path = url.pathname.replace(/\/$/, "") || "/";
+      path = url.pathname.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
     verifyAccess(req, url);
     const segments = path.split("/").filter(Boolean),
       method = req.method;
     if (method === "OPTIONS") return new Response(null, { status: 204 });
+    const cookieId = sessionId(req);
+    if (path === "/api/auth/session" && method === "GET") {
+      const authenticated = sessions.valid(cookieId);
+      return json({
+        authenticated,
+        username: authenticated ? "admin" : null,
+        demo: true,
+      });
+    }
+    if (path === "/api/auth/login" && method === "POST") {
+      const input = await body(req);
+      keys(input, ["username", "password"]);
+      if (input.username !== "admin" || input.password !== "admin")
+        throw new AppError(
+          401,
+          "INVALID_CREDENTIALS",
+          "Incorrect demo username or password",
+        );
+      const id = sessions.create(cookieId);
+      const response = json({
+        authenticated: true,
+        username: "admin",
+        demo: true,
+      });
+      response.headers.set("Set-Cookie", sessionCookie(req, id));
+      return response;
+    }
+    if (path === "/api/auth/logout" && method === "POST") {
+      sessions.revoke(cookieId);
+      const response = json({ ok: true });
+      response.headers.set("Set-Cookie", sessionCookie(req, "", true));
+      return response;
+    }
+    if (
+      path.startsWith("/api/") &&
+      path !== "/api/health" &&
+      !sessions.valid(cookieId) &&
+      !(TOKEN && req.headers.get("authorization") === `Bearer ${TOKEN}`)
+    )
+      throw new AppError(
+        401,
+        "UNAUTHORIZED",
+        "Sign in to the local demo first",
+      );
     if (path === "/api/health" && method === "GET")
       return json({
         ok: true,

@@ -1,5 +1,6 @@
 const errors: Record<string, string> = {
-  UNAUTHORIZED: "服务需要访问令牌，请检查本地部署的访问配置",
+  UNAUTHORIZED: "登录已过期，请重新登录",
+  INVALID_CREDENTIALS: "用户名或密码错误，请重试",
   FILE_TOO_LARGE: "文件超过服务端大小限制，请缩小文件后重试",
   UNSUPPORTED_FILE: "暂不支持此文件类型，请使用 PDF、Word 或图片",
   INVALID_SIGNATURE: "文件内容与扩展名不一致，请检查原文件",
@@ -29,33 +30,63 @@ const errors: Record<string, string> = {
 };
 export class ApiError extends Error {
   code?: string;
-  constructor(message: string, code?: string) {
+  status?: number;
+  constructor(message: string, code?: string, status?: number) {
     super(message);
     this.code = code;
+    this.status = status;
   }
+}
+export type AuthSession = {
+  authenticated: boolean;
+  username: "admin" | null;
+  demo: true;
+};
+export const AUTH_EXPIRED_EVENT = "med-report:auth-expired";
+let authEpoch = 0;
+// Ignore late 401s from a workspace that has already been unmounted.
+export const advanceAuthSession = () => ++authEpoch;
+
+async function responseError(
+  response: Response,
+  requestEpoch: number,
+  authRequest = false,
+): Promise<ApiError> {
+  let body: any = {};
+  try {
+    body = await response.json();
+  } catch {}
+  if (response.status === 401 && !authRequest && requestEpoch === authEpoch) {
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  }
+  return new ApiError(
+    errors[body.code] ||
+      body.error ||
+      (response.status === 401
+        ? "登录已过期，请重新登录"
+        : `请求失败（${response.status}），请重试`),
+    body.code,
+    response.status,
+  );
 }
 export async function api<T = any>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  const requestEpoch = authEpoch;
   const headers = new Headers(options.headers);
   if (options.body && !(options.body instanceof FormData))
     headers.set("Content-Type", "application/json");
-  const response = await fetch(`/api${path}`, { ...options, headers });
+  const response = await fetch(`/api${path}`, {
+    ...options,
+    headers,
+    credentials: "same-origin",
+  });
   if (!response.ok) {
-    let body: any;
-    try {
-      body = await response.json();
-    } catch {
-      body = {};
-    }
-    throw new ApiError(
-      errors[body.code] ||
-        body.error ||
-        (response.status === 401
-          ? "服务需要访问令牌。请检查服务端访问配置。"
-          : `请求失败（${response.status}），请重试`),
-      body.code,
+    throw await responseError(
+      response,
+      requestEpoch,
+      path.startsWith("/auth/"),
     );
   }
   return response.json();
@@ -66,17 +97,20 @@ export async function downloadReport(
   format: string,
   filename: string,
 ) {
+  const requestEpoch = authEpoch;
   const response = await fetch(
     `/api/reports/${encodeURIComponent(id)}/export?format=${format}`,
+    { credentials: "same-origin" },
   );
   if (!response.ok) {
-    let body: any = {};
-    try {
-      body = await response.json();
-    } catch {}
-    throw new Error(body.error || "导出失败，请重试");
+    throw await responseError(response, requestEpoch);
   }
-  const url = URL.createObjectURL(await response.blob());
+  if (requestEpoch !== authEpoch)
+    throw new ApiError("登录状态已变更，请重新导出", "SESSION_CHANGED");
+  const blob = await response.blob();
+  if (requestEpoch !== authEpoch)
+    throw new ApiError("登录状态已变更，请重新导出", "SESSION_CHANGED");
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = `${filename.replace(/\.[^.]+$/, "")}_分析报告.${format}`;

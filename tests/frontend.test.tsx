@@ -51,7 +51,7 @@ for (const key of globals) {
   });
 }
 (dom.HTMLElement.prototype as any).scrollIntoView = () => {};
-const { render, screen, fireEvent, waitFor, cleanup, within } =
+const { render, screen, fireEvent, waitFor, cleanup, within, act } =
   await import("@testing-library/react");
 const { default: App } = await import("../src/App");
 const originalFetch = globalThis.fetch;
@@ -60,6 +60,7 @@ let report: Report;
 let config: Config;
 let templates: Template[];
 let rules: Rule[];
+let authenticated: boolean;
 const now = "2026-09-30T07:00:00.000Z";
 const reportFixture = (): Report => ({
   id: "test-report",
@@ -110,10 +111,11 @@ const respond = (body: unknown, status = 200) =>
   });
 beforeEach(() => {
   calls = [];
+  authenticated = true;
   report = reportFixture();
   config = {
     mode: "mock",
-    model: "glm-4.7",
+    model: "glm-5.3",
     endpoint: "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
     keyConfigured: false,
     domain: "检验报告",
@@ -152,6 +154,26 @@ beforeEach(() => {
     const body =
       typeof init.body === "string" ? JSON.parse(init.body) : init.body;
     calls.push({ path, method, body });
+    if (path === "/api/auth/session")
+      return respond({
+        authenticated,
+        username: authenticated ? "admin" : null,
+        demo: true,
+      });
+    if (path === "/api/auth/login" && method === "POST") {
+      if (body.username !== "admin" || body.password !== "admin")
+        return respond(
+          { code: "INVALID_CREDENTIALS", error: "Invalid credentials" },
+          401,
+        );
+      authenticated = true;
+      return respond({ authenticated: true, username: "admin", demo: true });
+    }
+    if (path === "/api/auth/logout" && method === "POST") {
+      authenticated = false;
+      return respond({ ok: true });
+    }
+    if (!authenticated) return respond({ code: "UNAUTHORIZED" }, 401);
     if (path === "/api/health")
       return respond({
         ok: true,
@@ -273,6 +295,347 @@ async function ready() {
   render(<App />);
   await screen.findByRole("heading", { name: "研究血检.pdf" });
 }
+
+async function login(username = "admin", password = "admin") {
+  await screen.findByRole("heading", { name: "登录研究工作台" });
+  fireEvent.change(screen.getByLabelText("用户名"), {
+    target: { value: username },
+  });
+  fireEvent.change(screen.getByLabelText("密码"), {
+    target: { value: password },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录工作台" }));
+}
+
+describe("Local demo login", () => {
+  it("checks the cookie session before requesting or showing report data", async () => {
+    let resolveSession!: (response: Response) => void;
+    const fetchMock = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input) === "/api/auth/session")
+        return new Promise<Response>((resolve) => {
+          resolveSession = resolve;
+        });
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    render(<App />);
+    expect(
+      screen.getByRole("heading", { name: "正在检查登录状态" }),
+    ).toBeDefined();
+    expect(calls.length).toBe(0);
+    expect(screen.queryByRole("heading", { name: "报告工作台" })).toBeNull();
+    authenticated = false;
+    await act(async () =>
+      resolveSession(
+        respond({ authenticated: false, username: null, demo: true }),
+      ),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "登录研究工作台" }),
+    ).toBeDefined();
+    expect(screen.getByText("演示登录 · 仅限本机使用")).toBeDefined();
+    expect(screen.getByText(/固定账号不提供生产级安全保护/)).toBeDefined();
+    expect(screen.getAllByText("admin").length).toBe(2);
+    expect(calls.length).toBe(0);
+  });
+
+  it("logs in with admin/admin using same-origin cookies and restores login on reload", async () => {
+    authenticated = false;
+    const fetchMock = globalThis.fetch;
+    let loginOptions: RequestInit | undefined;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input) === "/api/auth/login") loginOptions = init;
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    render(<App />);
+    await login();
+    expect(
+      await screen.findByRole("heading", { name: "研究血检.pdf" }),
+    ).toBeDefined();
+    expect(calls.find((call) => call.path === "/api/auth/login")?.body).toEqual(
+      { username: "admin", password: "admin" },
+    );
+    expect(loginOptions?.credentials).toBe("same-origin");
+    expect(new Headers(loginOptions?.headers).has("Authorization")).toBe(false);
+    expect(dom.localStorage.length).toBe(0);
+    expect(dom.sessionStorage.length).toBe(0);
+    cleanup();
+    await ready();
+    expect(
+      calls.filter((call) => call.path === "/api/auth/session").length,
+    ).toBe(2);
+    expect(calls.filter((call) => call.path === "/api/auth/login").length).toBe(
+      1,
+    );
+  });
+
+  it("shows a clear wrong-password error, clears the password, and allows retry", async () => {
+    authenticated = false;
+    render(<App />);
+    await login("admin", "wrong");
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "用户名或密码错误，请重试",
+    );
+    expect((screen.getByLabelText("密码") as HTMLInputElement).value).toBe("");
+    expect(document.activeElement).toBe(screen.getByLabelText("密码"));
+    expect(
+      (screen.getByRole("button", { name: "登录工作台" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(calls.some((call) => call.path === "/api/reports")).toBe(false);
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "admin" },
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "登录工作台" }));
+    expect(
+      await screen.findByRole("heading", { name: "研究血检.pdf" }),
+    ).toBeDefined();
+  });
+
+  it("disables the login form and suppresses duplicate submits while pending", async () => {
+    authenticated = false;
+    let resolveLogin!: (response: Response) => void;
+    let attempts = 0;
+    const fetchMock = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input) === "/api/auth/login") {
+        attempts++;
+        return new Promise<Response>((resolve) => {
+          resolveLogin = resolve;
+        });
+      }
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    render(<App />);
+    await login();
+    const form = screen.getByRole("form", { name: "演示登录" });
+    expect(form.getAttribute("aria-busy")).toBe("true");
+    expect((screen.getByLabelText("用户名") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByLabelText("密码") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (screen.getByRole("button", { name: "正在登录…" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(attempts).toBe(1);
+    await act(async () =>
+      resolveLogin(respond({ code: "INVALID_CREDENTIALS" }, 401)),
+    );
+    expect(await screen.findByRole("alert")).toBeDefined();
+    expect(
+      (screen.getByRole("button", { name: "登录工作台" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("keeps reports hidden on a session-check failure and supports reconnecting", async () => {
+    const fetchMock = globalThis.fetch;
+    let fail = true;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input) === "/api/auth/session" && fail)
+        throw new Error("连接失败");
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    render(<App />);
+    expect(
+      await screen.findByRole("heading", { name: "暂时无法连接工作台" }),
+    ).toBeDefined();
+    expect(screen.getByRole("alert").textContent).toBe("连接失败");
+    expect(calls.some((call) => call.path === "/api/reports")).toBe(false);
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
+    expect(
+      await screen.findByRole("heading", { name: "研究血检.pdf" }),
+    ).toBeDefined();
+  });
+
+  it("clears report UI as logout starts, then creates a fresh workspace on re-login", async () => {
+    await ready();
+    fireEvent.click(screen.getByLabelText("选择第 1 页第 2 行"));
+    fireEvent.click(screen.getByRole("button", { name: "编辑 血糖" }));
+    let resolveLogout!: (response: Response) => void;
+    const fetchMock = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input) === "/api/auth/logout")
+        return new Promise<Response>((resolve) => {
+          resolveLogout = resolve;
+        });
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    expect(screen.getByRole("heading", { name: "正在退出登录" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "研究血检.pdf" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByLabelText("选择第 1 页第 2 行")).toBeNull();
+    authenticated = false;
+    await act(async () => resolveLogout(respond({ ok: true })));
+    expect(await screen.findByText("已退出登录")).toBeDefined();
+    await login();
+    expect(
+      await screen.findByRole("heading", { name: "研究血检.pdf" }),
+    ).toBeDefined();
+    expect(
+      (screen.getByLabelText("选择第 1 页第 2 行") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      calls.filter(
+        (call) => call.path === "/api/reports" && call.method === "GET",
+      ).length,
+    ).toBe(2);
+  });
+
+  it("keeps report data cleared and offers retry when logout fails", async () => {
+    await ready();
+    let fail = true;
+    const fetchMock = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input) === "/api/auth/logout" && fail)
+        throw new Error("连接失败");
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    expect(
+      await screen.findByRole("heading", { name: "退出未完成" }),
+    ).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "研究血检.pdf" })).toBeNull();
+    expect(screen.getByText(/服务端登录状态尚未确认退出/)).toBeDefined();
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "重试退出" }));
+    expect(
+      await screen.findByRole("heading", { name: "登录研究工作台" }),
+    ).toBeDefined();
+    expect(authenticated).toBe(false);
+  });
+
+  it("returns to login on an expired protected request and accepts a fresh login", async () => {
+    await ready();
+    authenticated = false;
+    fireEvent.click(screen.getByRole("button", { name: "重新判定" }));
+    expect(
+      await screen.findByRole("heading", { name: "登录研究工作台" }),
+    ).toBeDefined();
+    expect(screen.getByRole("status").textContent).toBe(
+      "登录已过期，请重新登录",
+    );
+    expect(screen.queryByText("血糖")).toBeNull();
+    await login();
+    expect(
+      await screen.findByRole("heading", { name: "研究血检.pdf" }),
+    ).toBeDefined();
+  });
+
+  it("also handles an expired cookie during report download", async () => {
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "导出当前报告" }));
+    const dialog = screen.getByRole("dialog", { name: "导出研究报告" });
+    authenticated = false;
+    fireEvent.click(within(dialog).getByRole("button", { name: /CSV/ }));
+    expect(
+      await screen.findByRole("heading", { name: "登录研究工作台" }),
+    ).toBeDefined();
+    expect(screen.getByRole("status").textContent).toBe(
+      "登录已过期，请重新登录",
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("ignores a late 401 from the previous workspace after re-login", async () => {
+    await ready();
+    const { api } = await import("../src/api");
+    const fetchMock = globalThis.fetch;
+    let resolveOld!: (response: Response) => void;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input) === "/api/old-request")
+        return new Promise<Response>((resolve) => {
+          resolveOld = resolve;
+        });
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    const oldRequest = api("/old-request").catch((error) => error);
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    await login();
+    expect(
+      await screen.findByRole("heading", { name: "研究血检.pdf" }),
+    ).toBeDefined();
+    await act(async () => {
+      resolveOld(respond({ code: "UNAUTHORIZED" }, 401));
+      await oldRequest;
+    });
+    expect(screen.getByRole("heading", { name: "研究血检.pdf" })).toBeDefined();
+    expect(
+      screen.queryByRole("heading", { name: "登录研究工作台" }),
+    ).toBeNull();
+  });
+
+  it("does not start a pending report download after logout", async () => {
+    await ready();
+    const { downloadReport } = await import("../src/api");
+    const fetchMock = globalThis.fetch;
+    const createObjectURL = URL.createObjectURL;
+    let createdUrls = 0;
+    let resolveBlob!: (blob: Blob) => void;
+    const response = new Response("report export");
+    response.blob = () =>
+      new Promise<Blob>((resolve) => {
+        resolveBlob = resolve;
+      });
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      if (String(input).includes("/export?")) return response;
+      return fetchMock(input, init);
+    }) as typeof fetch;
+    URL.createObjectURL = () => {
+      createdUrls++;
+      return "blob:unexpected-download";
+    };
+    try {
+      const download = downloadReport(
+        "test-report",
+        "csv",
+        "研究血检.pdf",
+      ).catch((error) => error);
+      await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+      await screen.findByRole("heading", { name: "登录研究工作台" });
+      resolveBlob(new Blob(["report export"]));
+      const error = await download;
+      expect(error.code).toBe("SESSION_CHANGED");
+      expect(createdUrls).toBe(0);
+    } finally {
+      URL.createObjectURL = createObjectURL;
+    }
+  });
+});
 
 describe("Chinese report workspace components", () => {
   it("renders a loaded report with traceable fields and no automatically selected evidence", async () => {
@@ -448,7 +811,7 @@ describe("Chinese report workspace components", () => {
     }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(dialog.textContent).toContain(config.endpoint);
-    expect(dialog.textContent).toContain("glm-4.7");
+    expect(dialog.textContent).toContain("glm-5.3");
     expect(dialog.textContent).toContain("diseaseContext");
     expect(calls.some((c) => c.path.endsWith("/analyze"))).toBe(false);
     fireEvent.click(within(dialog).getByRole("button", { name: "返回核对" }));

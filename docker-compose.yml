@@ -10,8 +10,9 @@ services:
       CONTAINER_LOCAL_ONLY: "1"
       AI_MODE: ${AI_MODE:-mock}
       GLM_API_KEY: ${GLM_API_KEY:-}
-      GLM_MODEL: ${GLM_MODEL:-glm-4.7}
+      GLM_MODEL: ${GLM_MODEL:-glm-5.3}
       APP_ORIGIN: http://localhost:3001
+      APP_TOKEN: ${APP_TOKEN:-}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
       OMP_THREAD_LIMIT: ${OMP_THREAD_LIMIT:-2}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-20}

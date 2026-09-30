@@ -27,6 +27,7 @@ const error = {
 const responses = (schema: unknown, success = "200") => ({
   [success]: response(schema),
   "400": error,
+  "401": error,
   "403": error,
   "404": error,
   "409": error,
@@ -113,8 +114,43 @@ export const openapi = {
       "Local extraction and evidence-linked review. Synthetic demonstration, not a medical device. AI mock is default. Live endpoint fixed to BigModel Coding Plan; GLM_API_KEY server environment only. Every AI request requires one-use preview, exact anchor IDs and informed consent. Upload processing uses a bounded background queue.",
   },
   servers: [{ url: "/" }],
-  security: [{ bearerAuth: [] }],
+  security: [{ cookieAuth: [] }, { bearerAuth: [] }],
   paths: {
+    "/api/auth/session": {
+      get: {
+        summary: "Current demo browser session",
+        security: [],
+        responses: responses(
+          object({
+            authenticated: boolean,
+            username: { type: "string", nullable: true },
+            demo: boolean,
+          }),
+        ),
+      },
+    },
+    "/api/auth/login": {
+      post: {
+        summary: "Local demo login (admin/admin); sets HttpOnly session cookie",
+        security: [],
+        requestBody: body(
+          object({ username: string, password: string }, [
+            "username",
+            "password",
+          ]),
+        ),
+        responses: responses(
+          object({ authenticated: boolean, username: string, demo: boolean }),
+        ),
+      },
+    },
+    "/api/auth/logout": {
+      post: {
+        summary: "Revoke current demo session and expire its cookie",
+        security: [],
+        responses: responses(object({ ok: boolean })),
+      },
+    },
     "/api/health": {
       get: {
         summary: "Health, local tool capabilities and queue budget",
@@ -315,11 +351,17 @@ export const openapi = {
   },
   components: {
     securitySchemes: {
+      cookieAuth: {
+        type: "apiKey",
+        in: "cookie",
+        name: "med_report_session",
+        description: "Eight-hour local demo session from POST /api/auth/login",
+      },
       bearerAuth: {
         type: "http",
         scheme: "bearer",
         description:
-          "Required when APP_TOKEN is set. Local loopback defaults do not require a token.",
+          "Optional script access when APP_TOKEN is set, accepted instead of a demo session. Does not disable admin/admin login.",
       },
     },
     schemas: {

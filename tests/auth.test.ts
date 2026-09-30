@@ -135,3 +135,213 @@ describe("optional application access token", () => {
     }
   });
 });
+
+async function login(cookie?: string) {
+  return fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(cookie ? { cookie } : {}),
+    },
+    body: JSON.stringify({ username: "admin", password: "admin" }),
+  });
+}
+function cookieOf(response: Response) {
+  return response.headers.get("set-cookie")!.split(";")[0]!;
+}
+describe("local demo admin session", () => {
+  test("public session check and incorrect password never create a session", async () => {
+    expect(await (await fetch(`${base}/api/auth/session`)).json()).toEqual({
+      authenticated: false,
+      username: null,
+      demo: true,
+    });
+    for (const input of [
+      { username: "admin", password: "wrong" },
+      { username: "other", password: "admin" },
+      { username: "admin" },
+    ]) {
+      const response = await fetch(`${base}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      expect(response.status).toBe(401);
+      expect((await response.json()).code).toBe("INVALID_CREDENTIALS");
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+  });
+  test("login issues opaque HttpOnly cookie and rotates an existing session", async () => {
+    const response = await login("med_report_session=attacker-selected");
+    expect(response.ok).toBe(true);
+    expect(await response.json()).toEqual({
+      authenticated: true,
+      username: "admin",
+      demo: true,
+    });
+    const setCookie = response.headers.get("set-cookie")!;
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+    expect(setCookie).toContain("Max-Age=28800");
+    expect(setCookie).not.toContain("attacker-selected");
+    const first = cookieOf(response);
+    expect(
+      (await fetch(`${base}/api/reports`, { headers: { cookie: first } })).ok,
+    ).toBe(true);
+    const second = cookieOf(await login(first));
+    expect(second).not.toBe(first);
+    expect(
+      (await fetch(`${base}/api/reports`, { headers: { cookie: first } }))
+        .status,
+    ).toBe(401);
+    expect(
+      (await fetch(`${base}/api/reports`, { headers: { cookie: second } })).ok,
+    ).toBe(true);
+    expect(
+      await (
+        await fetch(`${base}/api/auth/session`, { headers: { cookie: second } })
+      ).json(),
+    ).toEqual({ authenticated: true, username: "admin", demo: true });
+  });
+  test("report APIs, originals, exports and documentation require authentication", async () => {
+    for (const path of [
+      "/reports",
+      "/reports/not-found",
+      "/reports/not-found/original",
+      "/reports/not-found/export?format=json",
+      "/templates",
+      "/rules",
+      "/history",
+      "/config",
+      "/jobs/not-found",
+      "/docs",
+      "/openapi.json",
+    ]) {
+      expect((await fetch(`${base}/api${path}`)).status).toBe(401);
+      expect(
+        (
+          await fetch(`${base}/api${path}`, {
+            headers: { cookie: "med_report_session=forged" },
+          })
+        ).status,
+      ).toBe(401);
+    }
+    expect((await fetch(`${base}/api/demo`, { method: "POST" })).status).toBe(
+      401,
+    );
+  });
+  test("duplicate path separators cannot bypass the shared API auth boundary", async () => {
+    for (const path of [
+      "//api/templates",
+      "//api/rules",
+      "//api/reports/missing/original",
+      "//api/reports/missing/export?format=json",
+      "/api//reports",
+      "///api/reports",
+    ]) {
+      expect((await fetch(base + path)).status).toBe(401);
+    }
+  });
+  test("uploaded originals and exports work only while the session is valid", async () => {
+    const cookie = cookieOf(await login());
+    const form = new FormData();
+    form.set(
+      "file",
+      new File(["Glucose 6.2 mmol/L 3.9-6.1"], "synthetic-auth.txt", {
+        type: "text/plain",
+      }),
+    );
+    const uploaded = await fetch(`${base}/api/reports`, {
+      method: "POST",
+      headers: { cookie },
+      body: form,
+    });
+    expect(uploaded.status).toBe(202);
+    const item = await uploaded.json();
+    const id = item.report?.id ?? item.id;
+    for (const path of [
+      `/api/reports/${id}/original`,
+      `/api/reports/${id}/export?format=json`,
+    ]) {
+      expect((await fetch(base + path)).status).toBe(401);
+      expect((await fetch(base + path, { headers: { cookie } })).ok).toBe(true);
+    }
+    await fetch(`${base}/api/auth/logout`, {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(
+      (
+        await fetch(`${base}/api/reports/${id}/original`, {
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await fetch(`${base}/api/reports/${id}/export?format=json`, {
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(401);
+  });
+  test("logout clears cookie, revokes server session and is idempotent", async () => {
+    const cookie = cookieOf(await login());
+    const logout = await fetch(`${base}/api/auth/logout`, {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(logout.ok).toBe(true);
+    expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(
+      (await fetch(`${base}/api/reports`, { headers: { cookie } })).status,
+    ).toBe(401);
+    expect(
+      (
+        await (
+          await fetch(`${base}/api/auth/session`, { headers: { cookie } })
+        ).json()
+      ).authenticated,
+    ).toBe(false);
+    expect(
+      (
+        await fetch(`${base}/api/auth/logout`, {
+          method: "POST",
+          headers: { cookie },
+        })
+      ).ok,
+    ).toBe(true);
+    const next = cookieOf(await login());
+    expect(next).not.toBe(cookie);
+    expect(
+      (await fetch(`${base}/api/reports`, { headers: { cookie: next } })).ok,
+    ).toBe(true);
+  });
+  test("cross-origin login and logout are rejected without invalidating session", async () => {
+    const cookie = cookieOf(await login());
+    expect(
+      (
+        await fetch(`${base}/api/auth/logout`, {
+          method: "POST",
+          headers: { cookie, "sec-fetch-site": "cross-site" },
+        })
+      ).status,
+    ).toBe(403);
+    for (const path of ["login", "logout"]) {
+      const response = await fetch(`${base}/api/auth/${path}`, {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: "https://untrusted.invalid",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ username: "admin", password: "admin" }),
+      });
+      expect(response.status).toBe(403);
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+    expect(
+      (await fetch(`${base}/api/reports`, { headers: { cookie } })).ok,
+    ).toBe(true);
+  });
+});

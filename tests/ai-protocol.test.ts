@@ -32,6 +32,7 @@ beforeAll(async () => {
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
 describe("AI protocol with a fully mocked transport", () => {
   test.each([
+    "GLM-5.3 preview matches the transmitted thinking-enabled payload",
     "transmits only the previewed minimized payload and never identifier-only lines",
     "invalid citations and diagnostic or treatment instructions are not accepted",
     "invented measurement values with real citations are rejected or explicitly uncertain",

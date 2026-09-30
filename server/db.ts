@@ -109,7 +109,7 @@ export function config(): AppConfig {
   return (
     get<AppConfig>("settings", "config") || {
       mode: process.env.AI_MODE === "live" ? "live" : "mock",
-      model: process.env.GLM_MODEL || "glm-4.7",
+      model: process.env.GLM_MODEL || "glm-5.3",
       domain: "检验报告",
       diseaseContext: "",
     }

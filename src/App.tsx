@@ -36,6 +36,8 @@ import {
   Link2,
   Loader2,
   LockKeyhole,
+  LogIn,
+  LogOut,
   Menu,
   MoreHorizontal,
   Pencil,
@@ -60,7 +62,14 @@ import {
   Eye,
   Filter,
 } from "lucide-react";
-import { api, json, downloadReport } from "./api";
+import {
+  api,
+  json,
+  downloadReport,
+  AUTH_EXPIRED_EVENT,
+  advanceAuthSession,
+  type AuthSession,
+} from "./api";
 import type {
   Page,
   Report,
@@ -302,7 +311,307 @@ function Empty({
   );
 }
 
+function AuthShell({ children }: { children: ReactNode }) {
+  return (
+    <main className="auth-page">
+      <div className="auth-layout">
+        <section className="auth-intro" aria-label="医疗报告研究工作台">
+          <div className="brand auth-brand">
+            <div className="brand-symbol" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+            <div>
+              <div className="brand-name">医疗报告</div>
+              <div className="brand-sub">MED-REPORT STUDIO</div>
+            </div>
+          </div>
+          <div className="auth-intro-copy">
+            <div className="eyebrow">YOUR LOCAL RESEARCH SPACE</div>
+            <h2>
+              每一份报告，
+              <br />
+              都有据可循。
+            </h2>
+            <p>
+              整理检验字段、核对原文证据，
+              <br />
+              在你的本地工作空间继续研究。
+            </p>
+          </div>
+          <div className="auth-local-note">
+            <ShieldCheck size={19} aria-hidden="true" />
+            <p>
+              文件在本地解析与保存
+              <br />
+              <span>AI 仅接收经你确认的脱敏片段</span>
+            </p>
+          </div>
+        </section>
+        <section className="auth-card" aria-label="工作台登录">
+          {children}
+          <div className="auth-demo-warning" role="note">
+            <AlertTriangle size={18} aria-hidden="true" />
+            <div>
+              <strong>演示登录 · 仅限本机使用</strong>
+              <p>
+                固定账号不提供生产级安全保护。请勿暴露到公网，也不要用于存放真实敏感医疗数据。
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+      <p className="auth-footer">研究辅助工具 · 不构成医疗诊断或治疗建议</p>
+    </main>
+  );
+}
+
+function Login({
+  notice,
+  onLogin,
+}: {
+  notice: string;
+  onLogin: (session: AuthSession) => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (error && !loading) passwordRef.current?.focus();
+  }, [error, loading]);
+  return (
+    <AuthShell>
+      <div className="auth-heading-icon">
+        <LockKeyhole size={23} aria-hidden="true" />
+      </div>
+      <div className="eyebrow">WELCOME TO YOUR WORKSPACE</div>
+      <h1>登录研究工作台</h1>
+      <p className="auth-subtitle">使用演示账号，开始本地报告研究</p>
+      {notice && (
+        <p className="auth-notice" role="status">
+          {notice}
+        </p>
+      )}
+      <div className="auth-credentials" id="demo-credentials">
+        <span>演示账号</span>
+        <p>
+          用户名：<strong>admin</strong>
+          <span aria-hidden="true"> / </span>密码：<strong>admin</strong>
+        </p>
+      </div>
+      <form
+        className="auth-form"
+        aria-label="演示登录"
+        aria-busy={loading}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (submitting.current) return;
+          submitting.current = true;
+          setLoading(true);
+          setError("");
+          try {
+            const session = await api<AuthSession>("/auth/login", {
+              method: "POST",
+              body: json({ username, password }),
+            });
+            if (!session.authenticated || session.username !== "admin")
+              throw new Error("登录未成功，请重试");
+            setPassword("");
+            onLogin(session);
+          } catch (e) {
+            setError(errText(e));
+            setPassword("");
+          } finally {
+            submitting.current = false;
+            setLoading(false);
+          }
+        }}
+      >
+        <div>
+          <label htmlFor="login-username">用户名</label>
+          <input
+            id="login-username"
+            name="username"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            autoFocus
+            required
+            disabled={loading}
+            value={username}
+            onChange={(event) => {
+              setUsername(event.target.value);
+              setError("");
+            }}
+            aria-describedby="demo-credentials"
+            placeholder="请输入用户名"
+          />
+        </div>
+        <div>
+          <label htmlFor="login-password">密码</label>
+          <input
+            id="login-password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            ref={passwordRef}
+            required
+            disabled={loading}
+            value={password}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              setError("");
+            }}
+            aria-invalid={!!error}
+            aria-describedby={
+              error ? "login-error demo-credentials" : "demo-credentials"
+            }
+            placeholder="请输入密码"
+          />
+        </div>
+        {error && (
+          <p className="auth-error" id="login-error" role="alert">
+            <AlertCircle size={16} aria-hidden="true" />
+            {error}
+          </p>
+        )}
+        <Button variant="primary auth-submit" type="submit" disabled={loading}>
+          {loading ? (
+            <Loader2 className="spinner" size={17} aria-hidden="true" />
+          ) : (
+            <LogIn size={17} aria-hidden="true" />
+          )}
+          {loading ? "正在登录…" : "登录工作台"}
+        </Button>
+      </form>
+    </AuthShell>
+  );
+}
+
 export default function App() {
+  const [state, setState] = useState<
+    | "checking"
+    | "signedOut"
+    | "signedIn"
+    | "signingOut"
+    | "checkError"
+    | "logoutError"
+  >("checking");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const sessionActive = useRef(false);
+
+  useEffect(() => {
+    const expired = () => {
+      if (!sessionActive.current) return;
+      sessionActive.current = false;
+      advanceAuthSession();
+      setNotice("登录已过期，请重新登录");
+      setState("signedOut");
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, expired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
+  }, []);
+
+  const checkSession = useCallback(async (signal?: AbortSignal) => {
+    setState("checking");
+    setError("");
+    try {
+      const session = await api<AuthSession>("/auth/session", { signal });
+      if (signal?.aborted) return;
+      advanceAuthSession();
+      sessionActive.current =
+        session.authenticated && session.username === "admin";
+      setState(sessionActive.current ? "signedIn" : "signedOut");
+    } catch (e) {
+      if (signal?.aborted) return;
+      setError(errText(e));
+      setState("checkError");
+    }
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    void checkSession(controller.signal);
+    return () => controller.abort();
+  }, [checkSession]);
+
+  const logout = async () => {
+    sessionActive.current = false;
+    advanceAuthSession();
+    setState("signingOut");
+    setError("");
+    try {
+      await api("/auth/logout", { method: "POST" });
+      setNotice("已退出登录");
+      setState("signedOut");
+    } catch (e) {
+      setError(errText(e));
+      setState("logoutError");
+    }
+  };
+
+  if (state === "signedIn") return <Workspace onLogout={logout} />;
+  if (state === "signedOut")
+    return (
+      <Login
+        notice={notice}
+        onLogin={() => {
+          advanceAuthSession();
+          sessionActive.current = true;
+          setNotice("");
+          setState("signedIn");
+        }}
+      />
+    );
+  const pending = state === "checking" || state === "signingOut";
+  return (
+    <AuthShell>
+      <div className="auth-state" aria-busy={pending}>
+        {pending ? (
+          <Loader2 size={27} className="spinner" aria-hidden="true" />
+        ) : (
+          <AlertCircle size={27} aria-hidden="true" />
+        )}
+        <h1>
+          {state === "checking"
+            ? "正在检查登录状态"
+            : state === "signingOut"
+              ? "正在退出登录"
+              : state === "logoutError"
+                ? "退出未完成"
+                : "暂时无法连接工作台"}
+        </h1>
+        {pending ? (
+          <p role="status">请稍候…</p>
+        ) : (
+          <>
+            <p className="auth-error" role="alert">
+              {error}
+            </p>
+            {state === "logoutError" && (
+              <p>当前页面已清空报告，但服务端登录状态尚未确认退出，请重试。</p>
+            )}
+            <Button
+              variant="primary"
+              onClick={() =>
+                state === "logoutError" ? void logout() : void checkSession()
+              }
+            >
+              {state === "logoutError" ? "重试退出" : "重新连接"}
+            </Button>
+          </>
+        )}
+      </div>
+    </AuthShell>
+  );
+}
+
+function Workspace({ onLogout }: { onLogout: () => void }) {
   const [page, setPage] = useState<Page>("workspace");
   const [reports, setReports] = useState<Report[]>([]);
   const [report, setReport] = useState<Report | null>(null);
@@ -692,10 +1001,17 @@ export default function App() {
           <div className="workspace-person">
             <div className="avatar">研</div>
             <div>
-              <div className="person-name">个人研究空间</div>
-              <div className="person-role">LOCAL WORKSPACE</div>
+              <div className="person-name">admin · 演示账号</div>
+              <div className="person-role">仅限本机 · LOCAL DEMO</div>
             </div>
-            <LockKeyhole size={13} />
+            <button
+              className="logout-button"
+              aria-label="退出登录"
+              title="退出登录"
+              onClick={onLogout}
+            >
+              <LogOut size={16} aria-hidden="true" />
+            </button>
           </div>
         </div>
       </aside>
@@ -730,6 +1046,10 @@ export default function App() {
           </div>
         </header>
         <main className="content">
+          <div className="workspace-demo-notice" role="note">
+            <AlertTriangle size={14} aria-hidden="true" />
+            演示账号 admin · 仅限本机使用，请勿部署到公网或存放真实敏感医疗数据
+          </div>
           <div className="page-header">
             <div>
               <div className="eyebrow">
